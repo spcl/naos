@@ -1,0 +1,4 @@
+repo: fd16c54261b32be1aaedd863b7e856801b7f8543
+node: 3cf5b251dc0b3e851fbbb8b2031b931d0cc0d585
+branch: default
+tag: shenandoah-jdk-11.0.6+8
