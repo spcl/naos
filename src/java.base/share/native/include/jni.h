@@ -770,6 +770,85 @@ struct JNINativeInterface_ {
 
     jobject (JNICALL *GetModule)
        (JNIEnv* env, jclass clazz);
+
+    void* (JNICALL *CreateActiveRdmaEP)
+       (JNIEnv* env, void* id,  jint inlinesize, jint sendsize, jint recvsize, jint buffersize, jint nums);
+
+    void* (JNICALL *CreatePassiveRdmaEP)
+       (JNIEnv* env, void* id,  jint inlinesize, jint sendsize, jint recvsize, jint buffersize, jint nums);
+
+    void (JNICALL *FinilizeRdmaEP)
+       (JNIEnv* env, void* _ep);
+
+    jint (JNICALL *PollRdmaEP)
+       (JNIEnv* env, void* _ep, jint timeout);
+
+    void (JNICALL *RdmaWriteObj)
+       (JNIEnv* env, jlong _ep, jobject obj, jint array_len);
+
+    jlong (JNICALL *AsyncRdmaWriteObj)
+       (JNIEnv* env, jlong _ep, jobject obj, jint array_len);
+
+    jobject (JNICALL *RdmaReadObj)
+       (JNIEnv* env, jlong _ep);
+
+    void (JNICALL *RdmaWriteInt)
+       (JNIEnv* env, jlong _ep, jint val);
+
+    jint (JNICALL *RdmaReadInt)
+       (JNIEnv* env, jlong _ep);
+
+    void (JNICALL *RdmaCloseEP)
+       (JNIEnv* env, jlong _ep);
+
+    void (JNICALL *Test_f6)
+       (JNIEnv* env);
+
+    void (JNICALL *Test_f7)
+       (JNIEnv* env);
+
+    void (JNICALL *WaitRdma)
+       (JNIEnv* env, jlong rdmaep, jlong handle);
+
+    jboolean (JNICALL *TestRdma)
+       (JNIEnv* env, jlong rdmaep, jlong handle);
+
+    void*  (JNICALL *CreateNaosTcp)
+       (JNIEnv* env,jint fd);
+
+    void (JNICALL *Test_f11)
+       (JNIEnv* env,jobject object);
+
+    void (JNICALL *SendNaosTcp)
+        (JNIEnv* env, jlong naostcp, jobject initial_object, jint array_len);
+
+    jobject (JNICALL *ReceiveNaosTcp)
+        (JNIEnv* env, jlong naostcp,jlong was_iterable);
+
+  jobject (JNICALL *SendSkyway)
+        (JNIEnv* env, jlong skyway, jobject initial_object, jint init_size);
+
+  jint (JNICALL *SendSkywayBuf)
+        (JNIEnv* env, jlong skyway, jobject initial_object, jobject bytes);
+
+  jobject (JNICALL *ReceiveSkyway)
+        (JNIEnv* env, jlong skyway, jobject bytes);
+
+  jlong (JNICALL *CreateSkyway)
+        (JNIEnv* env);   
+
+  void (JNICALL *RegisterSkywayClass)
+        (JNIEnv* env, jlong skyway, jclass clazz, jint id);
+
+
+  jlong (JNICALL *GetSize)
+        (JNIEnv* env, jobject obj, jboolean bfs);
+
+    void (JNICALL *NaosSocketClose)
+        (JNIEnv* env, jlong naostcp);
+
+    jlong (JNICALL *GetKlassServiceAddr)
+        (JNIEnv* env, jint ip, jint fd);
 };
 
 /*
@@ -1866,6 +1945,112 @@ struct JNIEnv_ {
 
     jobject GetModule(jclass clazz) {
         return functions->GetModule(this, clazz);
+    }
+
+    void*  CreateActiveRdmaEP(void* id, jint inlinesize, jint sendsize, jint recvsize, jint buffersize, jint nums) {
+       return functions->CreateActiveRdmaEP(this, id, inlinesize, sendsize, recvsize, buffersize, nums);
+    }
+
+    void*  CreatePassiveRdmaEP(void* id, jint inlinesize, jint sendsize, jint recvsize, jint buffersize, jint nums) {
+       return functions->CreatePassiveRdmaEP(this, id, inlinesize, sendsize, recvsize, buffersize, nums);
+    }
+
+    void FinilizeRdmaEP(void* _ep){
+        functions->FinilizeRdmaEP(this, _ep);
+    }
+
+    jint PollRdmaEP(void* _ep, jint timeout){
+        return functions->PollRdmaEP(this, _ep,timeout);
+    }
+
+    void RdmaWriteObj(jlong _ep, jobject obj, jint array_len){
+        functions->RdmaWriteObj(this, _ep, obj, array_len);
+    }
+
+    jlong AsyncRdmaWriteObj(jlong _ep, jobject obj, jint array_len){
+        return functions->AsyncRdmaWriteObj(this, _ep, obj, array_len);
+    }
+
+    jobject RdmaReadObj(jlong _ep){
+        return functions->RdmaReadObj(this, _ep);
+    }
+    
+
+    void RdmaWriteInt(jlong _ep, jint val){
+        functions->RdmaWriteInt(this, _ep, val);
+    }
+ 
+    jint RdmaReadInt(jlong _ep){
+        return functions->RdmaReadInt(this, _ep);
+    }
+
+    void RdmaCloseEP(jlong _ep){
+        functions->RdmaCloseEP(this, _ep);
+    }
+
+    void Test_f6(){
+        functions->Test_f6(this);
+    }
+
+    void Test_f7(){
+        functions->Test_f7(this);
+    }
+
+    void WaitRdma(jlong rdmaep, jlong handle){
+        functions->WaitRdma(this, rdmaep, handle);
+    }
+
+    jboolean TestRdma(jlong rdmaep, jlong handle){
+        return functions->TestRdma(this,rdmaep, handle);
+    }
+
+    void*  CreateNaosTcp(int fd){
+        return functions->CreateNaosTcp(this,fd);
+    }
+
+    void Test_f11(jobject object){
+        functions->Test_f11(this,object);
+    }
+
+    void SendNaosTcp(jlong naostcp, jobject initial_object, jint array_len) {
+      return functions->SendNaosTcp(this, naostcp, initial_object, array_len);
+    }
+
+    jobject ReceiveNaosTcp(jlong naostcp, jlong was_iterable) {
+      return functions->ReceiveNaosTcp(this, naostcp,was_iterable);
+    }
+
+
+    jobject SendSkyway(jlong skyway, jobject initial_object, jint init_size) {
+      return functions->SendSkyway(this, skyway, initial_object, init_size);
+    }
+
+    jint SendSkywayBuf(jlong skyway, jobject initial_object, jobject bytes) {
+      return functions->SendSkywayBuf(this, skyway, initial_object, bytes);
+    }
+
+    jobject ReceiveSkyway(jlong skyway, jobject bytes) {
+      return functions->ReceiveSkyway(this, skyway, bytes);
+    }
+
+    jlong CreateSkyway( ) {
+      return functions->CreateSkyway(this);
+    }
+
+    void RegisterSkywayClass(jlong skyway, jclass clazz, jint id) {
+      return functions->RegisterSkywayClass(this, skyway, clazz, id);
+    }
+
+    jlong GetSize(jobject obj, jboolean bfs) {
+      return functions->GetSize(this, obj, bfs);
+    }
+ 
+    void NaosSocketClose(jlong naostcp) {
+      return functions->NaosSocketClose(this, naostcp);
+    }
+
+    jlong GetKlassServiceAddr(jint ip, jint fd) {
+      return functions->GetKlassServiceAddr(this, ip, fd);
     }
 
 #endif /* __cplusplus */

@@ -56,6 +56,10 @@
 #include "prims/jvmtiThreadState.hpp"
 #include "prims/nativeLookup.hpp"
 #include "prims/privilegedStack.hpp"
+#include "prims/jvm_naos.hpp"
+#include "prims/jvm_naos_klass_service.hpp"
+#include "prims/jvm_naos_tcp.hpp"
+#include "prims/jvm_naos_rdma.hpp"
 #include "prims/stackwalk.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/atomic.hpp"
@@ -3324,6 +3328,67 @@ JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
   return NULL;
 JVM_END
 
+/*
+ * NAOS 
+ */
+
+JVM_ENTRY(void, JVM_RdmaWriteObj(JNIEnv *env, jlong rdmaep, jobject obj, jint array_len))
+  JVMWrapper("JVM_RdmaWriteObj");
+  send_graph_rdma((void*)(uintptr_t)rdmaep, obj, true, array_len);
+JVM_END
+
+JVM_ENTRY(jlong, JVM_AsyncRdmaWriteObj(JNIEnv *env, jlong rdmaep, jobject obj, jint array_len))
+  JVMWrapper("JVM_AsyncRdmaWriteObj");
+  return send_graph_rdma((void*)(uintptr_t)rdmaep, obj, false, array_len);
+JVM_END
+
+JVM_ENTRY(jobject, JVM_RdmaReadObj(JNIEnv *env, jlong rdmaep))
+  JVMWrapper("JVM_RdmaReadObj");
+  return receive_graph_rdma((void*)(uintptr_t)rdmaep);
+JVM_END
+
+JVM_ENTRY(jobject, JVM_AllocAndPinBuffer(JNIEnv *env, jlong size, uint64_t *heap_buffer))
+  JVMWrapper("JVM_AllocAndPinBuffer");
+  return allocate_and_pin_buffer(size,heap_buffer);
+JVM_END
+
+JVM_ENTRY(void, JVM_UnpinBuffer(JNIEnv *env, jobject obj))
+  JVMWrapper("JVM_UnpinBuffer");
+  reset_and_unpin_buffer(obj);
+JVM_END
+
+JVM_ENTRY(void, JVM_RdmaCloseEP(JNIEnv *env, jlong rdmaep))
+  JVMWrapper("JVM_RdmaCloseEP");
+  close_rdma_ep((void*)(uintptr_t)rdmaep);
+JVM_END
+
+uint64_t count = 0;
+
+JVM_ENTRY(void, JVM_Test_f7(JNIEnv *env))
+  JVMWrapper("JVM_Test_f7");
+  count++;
+JVM_END
+
+JVM_ENTRY(void, JVM_WaitRdma(JNIEnv *env, jlong rdmaep, jlong handle))
+  JVMWrapper("JVM_WaitRdma");
+  wait_rdma((void*)(uintptr_t)rdmaep,handle);
+JVM_END
+
+
+JVM_ENTRY(jboolean, JVM_TestRdma(JNIEnv *env, jlong rdmaep, jlong handle))
+  JVMWrapper("JVM_TestRdma");
+  return test_rdma((void*)(uintptr_t)rdmaep,handle);
+JVM_END
+
+JVM_ENTRY(void* , JVM_CreateNaosTcp(JNIEnv *env,int fd))
+  JVMWrapper("JVM_CreateNaosTcp"); 
+  return create_naos_tcp(fd);
+JVM_END
+
+JVM_ENTRY(void, JVM_Test_f11(JNIEnv *env,jobject object))
+  JVMWrapper("JVM_Test_f11");
+  test_f11(object);
+JVM_END
 
 // Array ///////////////////////////////////////////////////////////////////////////////////////////
 

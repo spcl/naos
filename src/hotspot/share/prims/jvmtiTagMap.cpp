@@ -59,9 +59,19 @@
 #include "runtime/vmThread.hpp"
 #include "runtime/vm_operations.hpp"
 #include "utilities/macros.hpp"
+#include "utilities/queue.hpp"
+#include "utilities/globalDefinitions.hpp"
 #if INCLUDE_ZGC
 #include "gc/z/zGlobals.hpp"
 #endif
+
+#include "prims/jvmtiTagMap_tools.hpp"
+
+#define _GNU_SOURCE 1
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
 
 // JvmtiTagHashmapEntry
 //
@@ -767,243 +777,6 @@ jlong JvmtiTagMap::get_tag(jobject object) {
   return tag_for(this, o);
 }
 
-
-// Helper class used to describe the static or instance fields of a class.
-// For each field it holds the field index (as defined by the JVMTI specification),
-// the field type, and the offset.
-
-class ClassFieldDescriptor: public CHeapObj<mtInternal> {
- private:
-  int _field_index;
-  int _field_offset;
-  char _field_type;
- public:
-  ClassFieldDescriptor(int index, char type, int offset) :
-    _field_index(index), _field_type(type), _field_offset(offset) {
-  }
-  int field_index()  const  { return _field_index; }
-  char field_type()  const  { return _field_type; }
-  int field_offset() const  { return _field_offset; }
-};
-
-class ClassFieldMap: public CHeapObj<mtInternal> {
- private:
-  enum {
-    initial_field_count = 5
-  };
-
-  // list of field descriptors
-  GrowableArray<ClassFieldDescriptor*>* _fields;
-
-  // constructor
-  ClassFieldMap();
-
-  // add a field
-  void add(int index, char type, int offset);
-
-  // returns the field count for the given class
-  static int compute_field_count(InstanceKlass* ik);
-
- public:
-  ~ClassFieldMap();
-
-  // access
-  int field_count()                     { return _fields->length(); }
-  ClassFieldDescriptor* field_at(int i) { return _fields->at(i); }
-
-  // functions to create maps of static or instance fields
-  static ClassFieldMap* create_map_of_static_fields(Klass* k);
-  static ClassFieldMap* create_map_of_instance_fields(oop obj);
-};
-
-ClassFieldMap::ClassFieldMap() {
-  _fields = new (ResourceObj::C_HEAP, mtInternal)
-    GrowableArray<ClassFieldDescriptor*>(initial_field_count, true);
-}
-
-ClassFieldMap::~ClassFieldMap() {
-  for (int i=0; i<_fields->length(); i++) {
-    delete _fields->at(i);
-  }
-  delete _fields;
-}
-
-void ClassFieldMap::add(int index, char type, int offset) {
-  ClassFieldDescriptor* field = new ClassFieldDescriptor(index, type, offset);
-  _fields->append(field);
-}
-
-// Returns a heap allocated ClassFieldMap to describe the static fields
-// of the given class.
-//
-ClassFieldMap* ClassFieldMap::create_map_of_static_fields(Klass* k) {
-  HandleMark hm;
-  InstanceKlass* ik = InstanceKlass::cast(k);
-
-  // create the field map
-  ClassFieldMap* field_map = new ClassFieldMap();
-
-  FilteredFieldStream f(ik, false, false);
-  int max_field_index = f.field_count()-1;
-
-  int index = 0;
-  for (FilteredFieldStream fld(ik, true, true); !fld.eos(); fld.next(), index++) {
-    // ignore instance fields
-    if (!fld.access_flags().is_static()) {
-      continue;
-    }
-    field_map->add(max_field_index - index, fld.signature()->byte_at(0), fld.offset());
-  }
-  return field_map;
-}
-
-// Returns a heap allocated ClassFieldMap to describe the instance fields
-// of the given class. All instance fields are included (this means public
-// and private fields declared in superclasses and superinterfaces too).
-//
-ClassFieldMap* ClassFieldMap::create_map_of_instance_fields(oop obj) {
-  HandleMark hm;
-  InstanceKlass* ik = InstanceKlass::cast(obj->klass());
-
-  // create the field map
-  ClassFieldMap* field_map = new ClassFieldMap();
-
-  FilteredFieldStream f(ik, false, false);
-
-  int max_field_index = f.field_count()-1;
-
-  int index = 0;
-  for (FilteredFieldStream fld(ik, false, false); !fld.eos(); fld.next(), index++) {
-    // ignore static fields
-    if (fld.access_flags().is_static()) {
-      continue;
-    }
-    field_map->add(max_field_index - index, fld.signature()->byte_at(0), fld.offset());
-  }
-
-  return field_map;
-}
-
-// Helper class used to cache a ClassFileMap for the instance fields of
-// a cache. A JvmtiCachedClassFieldMap can be cached by an InstanceKlass during
-// heap iteration and avoid creating a field map for each object in the heap
-// (only need to create the map when the first instance of a class is encountered).
-//
-class JvmtiCachedClassFieldMap : public CHeapObj<mtInternal> {
- private:
-   enum {
-     initial_class_count = 200
-   };
-  ClassFieldMap* _field_map;
-
-  ClassFieldMap* field_map() const          { return _field_map; }
-
-  JvmtiCachedClassFieldMap(ClassFieldMap* field_map);
-  ~JvmtiCachedClassFieldMap();
-
-  static GrowableArray<InstanceKlass*>* _class_list;
-  static void add_to_class_list(InstanceKlass* ik);
-
- public:
-  // returns the field map for a given object (returning map cached
-  // by InstanceKlass if possible
-  static ClassFieldMap* get_map_of_instance_fields(oop obj);
-
-  // removes the field map from all instanceKlasses - should be
-  // called before VM operation completes
-  static void clear_cache();
-
-  // returns the number of ClassFieldMap cached by instanceKlasses
-  static int cached_field_map_count();
-};
-
-GrowableArray<InstanceKlass*>* JvmtiCachedClassFieldMap::_class_list;
-
-JvmtiCachedClassFieldMap::JvmtiCachedClassFieldMap(ClassFieldMap* field_map) {
-  _field_map = field_map;
-}
-
-JvmtiCachedClassFieldMap::~JvmtiCachedClassFieldMap() {
-  if (_field_map != NULL) {
-    delete _field_map;
-  }
-}
-
-// Marker class to ensure that the class file map cache is only used in a defined
-// scope.
-class ClassFieldMapCacheMark : public StackObj {
- private:
-   static bool _is_active;
- public:
-   ClassFieldMapCacheMark() {
-     assert(Thread::current()->is_VM_thread(), "must be VMThread");
-     assert(JvmtiCachedClassFieldMap::cached_field_map_count() == 0, "cache not empty");
-     assert(!_is_active, "ClassFieldMapCacheMark cannot be nested");
-     _is_active = true;
-   }
-   ~ClassFieldMapCacheMark() {
-     JvmtiCachedClassFieldMap::clear_cache();
-     _is_active = false;
-   }
-   static bool is_active() { return _is_active; }
-};
-
-bool ClassFieldMapCacheMark::_is_active;
-
-
-// record that the given InstanceKlass is caching a field map
-void JvmtiCachedClassFieldMap::add_to_class_list(InstanceKlass* ik) {
-  if (_class_list == NULL) {
-    _class_list = new (ResourceObj::C_HEAP, mtInternal)
-      GrowableArray<InstanceKlass*>(initial_class_count, true);
-  }
-  _class_list->push(ik);
-}
-
-// returns the instance field map for the given object
-// (returns field map cached by the InstanceKlass if possible)
-ClassFieldMap* JvmtiCachedClassFieldMap::get_map_of_instance_fields(oop obj) {
-  assert(Thread::current()->is_VM_thread(), "must be VMThread");
-  assert(ClassFieldMapCacheMark::is_active(), "ClassFieldMapCacheMark not active");
-
-  Klass* k = obj->klass();
-  InstanceKlass* ik = InstanceKlass::cast(k);
-
-  // return cached map if possible
-  JvmtiCachedClassFieldMap* cached_map = ik->jvmti_cached_class_field_map();
-  if (cached_map != NULL) {
-    assert(cached_map->field_map() != NULL, "missing field list");
-    return cached_map->field_map();
-  } else {
-    ClassFieldMap* field_map = ClassFieldMap::create_map_of_instance_fields(obj);
-    cached_map = new JvmtiCachedClassFieldMap(field_map);
-    ik->set_jvmti_cached_class_field_map(cached_map);
-    add_to_class_list(ik);
-    return field_map;
-  }
-}
-
-// remove the fields maps cached from all instanceKlasses
-void JvmtiCachedClassFieldMap::clear_cache() {
-  assert(Thread::current()->is_VM_thread(), "must be VMThread");
-  if (_class_list != NULL) {
-    for (int i = 0; i < _class_list->length(); i++) {
-      InstanceKlass* ik = _class_list->at(i);
-      JvmtiCachedClassFieldMap* cached_map = ik->jvmti_cached_class_field_map();
-      assert(cached_map != NULL, "should not be NULL");
-      ik->set_jvmti_cached_class_field_map(NULL);
-      delete cached_map;  // deletes the encapsulated field map
-    }
-    delete _class_list;
-    _class_list = NULL;
-  }
-}
-
-// returns the number of ClassFieldMap cached by instanceKlasses
-int JvmtiCachedClassFieldMap::cached_field_map_count() {
-  return (_class_list == NULL) ? 0 : _class_list->length();
-}
-
 // helper function to indicate if an object is filtered by its tag or class tag
 static inline bool is_filtered_by_heap_filter(jlong obj_tag,
                                               jlong klass_tag,
@@ -1611,36 +1384,6 @@ jvmtiError JvmtiTagMap::get_objects_with_tags(const jlong* tags,
   return collector.result(count_ptr, object_result_ptr, tag_result_ptr);
 }
 
-
-// ObjectMarker is used to support the marking objects when walking the
-// heap.
-//
-// This implementation uses the existing mark bits in an object for
-// marking. Objects that are marked must later have their headers restored.
-// As most objects are unlocked and don't have their identity hash computed
-// we don't have to save their headers. Instead we save the headers that
-// are "interesting". Later when the headers are restored this implementation
-// restores all headers to their initial value and then restores the few
-// objects that had interesting headers.
-//
-// Future work: This implementation currently uses growable arrays to save
-// the oop and header of interesting objects. As an optimization we could
-// use the same technique as the GC and make use of the unused area
-// between top() and end().
-//
-
-// An ObjectClosure used to restore the mark bits of an object
-class RestoreMarksClosure : public ObjectClosure {
- public:
-  void do_object(oop o) {
-    if (o != NULL) {
-      markOop mark = o->mark();
-      if (mark->is_marked()) {
-        o->init_mark();
-      }
-    }
-  }
-};
 
 // ObjectMarker provides the mark and visited functions
 class ObjectMarker : AllStatic {
@@ -2636,7 +2379,7 @@ class JNILocalRootsClosure : public OopClosure {
   virtual void do_oop(narrowOop* obj_p) { ShouldNotReachHere(); }
 };
 
-
+ 
 // A VM operation to iterate over objects that are reachable from
 // a set of roots or an initial object.
 //
@@ -2943,6 +2686,7 @@ inline bool VM_HeapWalkOperation::iterate_over_class(oop java_class) {
 // an object references a class and its instance fields
 // (static fields are ignored here as we report these as
 // references from the class).
+// <rbruno> vm op to interate over objects
 inline bool VM_HeapWalkOperation::iterate_over_object(oop o) {
   // reference to the class
   if (!CallbackInvoker::report_class_reference(o, o->klass()->java_mirror())) {
@@ -3288,10 +3032,10 @@ void JvmtiTagMap::follow_references(jint heap_filter,
 
   MutexLocker ml(Heap_lock);
   AdvancedHeapWalkContext context(heap_filter, klass, callbacks);
+  // <rbruno> here is the VM_HeapWalkOperation used in JVMTI
   VM_HeapWalkOperation op(this, initial_object, context, user_data);
   VMThread::execute(&op);
 }
-
 
 void JvmtiTagMap::weak_oops_do(BoolObjectClosure* is_alive, OopClosure* f) {
   // No locks during VM bring-up (0 threads) and no safepoints after main

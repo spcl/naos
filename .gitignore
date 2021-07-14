@@ -1,3 +1,13 @@
+compile_commands.json
+.classpath
+.project
+editinfo
+.settings
+target/
+*.o
+*.so
+*.class
+*.log
 /build/
 /dist/
 /.idea/

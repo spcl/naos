@@ -298,6 +298,45 @@ JNIEXPORT jobject JNICALL
 JVM_LatestUserDefinedLoader(JNIEnv *env);
 
 /*
+ * Naos 
+ */
+
+JNIEXPORT void JNICALL
+JVM_RdmaWriteObj(JNIEnv *env, jlong rdmaep, jobject obj, jint array_len);
+
+JNIEXPORT jlong JNICALL
+JVM_AsyncRdmaWriteObj(JNIEnv *env, jlong rdmaep, jobject obj, jint array_len);
+
+
+JNIEXPORT jobject JNICALL
+JVM_RdmaReadObj(JNIEnv *env, jlong rdmaep);
+
+JNIEXPORT jobject JNICALL
+JVM_AllocAndPinBuffer(JNIEnv *env, jlong size, uint64_t *heap_buffer);
+
+JNIEXPORT void JNICALL
+JVM_UnpinBuffer(JNIEnv *env, jobject obj);
+
+JNIEXPORT void JNICALL
+JVM_RdmaCloseEP(JNIEnv *env, jlong rdmaep);
+
+JNIEXPORT void JNICALL
+JVM_Test_f7(JNIEnv *env);
+
+JNIEXPORT void JNICALL
+JVM_WaitRdma(JNIEnv *env, jlong rdmaep, jlong handle);
+
+JNIEXPORT jboolean JNICALL
+JVM_TestRdma(JNIEnv *env, jlong rdmaep, jlong handle);
+
+JNIEXPORT void*  JNICALL 
+JVM_CreateNaosTcp(JNIEnv *env,int fd);
+ 
+JNIEXPORT void JNICALL
+JVM_Test_f11(JNIEnv *env,jobject object);
+
+
+/*
  * java.lang.reflect.Array
  */
 JNIEXPORT jint JNICALL

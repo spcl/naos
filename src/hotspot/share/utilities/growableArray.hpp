@@ -208,7 +208,7 @@ template<class E> class GrowableArray : public GenericGrowableArray {
   bool  is_empty() const        { return _len == 0; }
   bool  is_nonempty() const     { return _len != 0; }
   bool  is_full() const         { return _len == _max; }
-  DEBUG_ONLY(E* data_addr() const      { return _data; })
+  E* data_addr() const      { return _data; }
 
   void print();
 

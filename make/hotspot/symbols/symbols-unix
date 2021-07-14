@@ -22,9 +22,11 @@
 #
 
 JVM_ActiveProcessorCount
+JVM_AllocAndPinBuffer
 JVM_AreNestMates
 JVM_ArrayCopy
 JVM_AssertionStatusDirectives
+JVM_AsyncRdmaWriteObj
 JVM_BeforeHalt
 JVM_CallStackWalk
 JVM_Clone
@@ -47,6 +49,7 @@ JVM_ConstantPoolGetStringAt
 JVM_ConstantPoolGetTagAt
 JVM_ConstantPoolGetUTF8At
 JVM_CountStackFrames
+JVM_CreateNaosTcp
 JVM_CurrentThread
 JVM_CurrentTimeMillis
 JVM_DefineClass
@@ -158,6 +161,7 @@ JVM_MonitorNotifyAll
 JVM_MonitorWait
 JVM_MoreStackWalk
 JVM_NanoTime
+JVM_NaosSocketClose
 JVM_NativePath
 JVM_NewArray
 JVM_NewInstanceFromConstructor
@@ -167,6 +171,9 @@ JVM_RawMonitorCreate
 JVM_RawMonitorDestroy
 JVM_RawMonitorEnter
 JVM_RawMonitorExit
+JVM_RdmaCloseEP
+JVM_RdmaReadObj
+JVM_RdmaWriteObj
 JVM_RegisterSignal
 JVM_ReleaseUTF
 JVM_ResumeThread
@@ -180,9 +187,12 @@ JVM_StartThread
 JVM_StopThread
 JVM_SupportsCX8
 JVM_SuspendThread
+JVM_TestRdma
 JVM_TotalMemory
 JVM_UnloadLibrary
+JVM_UnpinBuffer
 JVM_WaitForReferencePendingList
+JVM_WaitRdma
 JVM_Yield
 
 # Module related API's

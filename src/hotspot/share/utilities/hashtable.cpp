@@ -477,6 +477,11 @@ template class BasicHashtable<mtInternal>;
 template class BasicHashtable<mtModule>;
 template class BasicHashtable<mtCompiler>;
 
+template class HashtableEntry<uint64_t,mtClass>;
+template HashtableEntry<uint64_t,mtClass>* Hashtable<uint64_t, mtClass>::new_entry(unsigned int, uint64_t);
+
+
+
 template void BasicHashtable<mtClass>::verify_table<DictionaryEntry>(char const*);
 template void BasicHashtable<mtModule>::verify_table<ModuleEntry>(char const*);
 template void BasicHashtable<mtModule>::verify_table<PackageEntry>(char const*);

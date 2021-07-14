@@ -89,9 +89,17 @@
 #include "utilities/internalVMTests.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/vmError.hpp"
+#include "utilities/queue.hpp"
+#include "utilities/rdma_passive_connection.h"
+#include "utilities/rdma_active_connection.h"
 #if INCLUDE_JVMCI
 #include "jvmci/jvmciCompiler.hpp"
 #include "jvmci/jvmciRuntime.hpp"
+#include "jvm_naos.hpp"
+#include "jvm_naos_tcp.hpp"
+#include "jvm_skyway.hpp"
+#include "jvm_naos_klass_service.hpp"
+
 #endif
 
 static jint CurrentVersion = JNI_VERSION_10;
@@ -262,6 +270,7 @@ void jfieldIDWorkaround::verify_instance_jfieldID(Klass* k, jfieldID id) {
 }
 
 // Wrapper to trace JNI functions
+
 
 #ifdef ASSERT
   Histogram* JNIHistogram;
@@ -3483,6 +3492,287 @@ JNI_ENTRY(jobject, jni_GetModule(JNIEnv* env, jclass clazz))
 JNI_END
 
 
+extern "C" { void* JNICALL jni_CreateActiveRdmaEP(JNIEnv* env, void* id, jint inlinesize, jint sendsize, jint recvsize, 
+            jint buffersize, jint nums){
+  JNIWrapper("jni_CreateActiveRdmaEP");
+ 
+  ActiveVerbsEP* ep = new ActiveVerbsEP((struct rdma_cm_id*)id,(uint32_t)inlinesize,(uint32_t)sendsize,
+                           (uint32_t)recvsize, (uint32_t)buffersize, (uint32_t)nums,NaosUseODP);
+  
+  ep->prepost_recv_for_exchange();
+
+  uint64_t addr = env->GetKlassServiceAddr(ep->get_my_ip(),-1);
+
+  uint32_t ip = (uint32_t)(addr>>32);
+  uint16_t port = (uint16_t)(addr & 0xFFFF);
+  printf("Klass service addr %u  port %u\n",ip,port);
+
+  ep->exchange_with_passive(ip,port);
+
+  return ep;
+} }
+
+extern "C" { void* JNICALL jni_CreatePassiveRdmaEP(JNIEnv* env, void* id, jint inlinesize, jint sendsize, jint recvsize, 
+            jint buffersize, jint nums){
+  JNIWrapper("jni_CreatePassivedmaEP");
+ 
+  PassiveVerbsEP* ep = new PassiveVerbsEP((struct rdma_cm_id*)id,(uint32_t)inlinesize,(uint32_t)sendsize,
+                         (uint32_t)recvsize, (uint32_t)buffersize, (uint32_t)nums,NaosUseODP);
+
+
+  ep->prepost_recv_for_exchange();
+
+  region_t reg[64]; 
+  assert(nums <= 64, "too many buffer requested");
+  for(int i =0; i < nums; i++){
+      uint64_t heap_buffer = 0;
+      jobject obj = JVM_AllocAndPinBuffer(env, ep->default_segment_size(), &heap_buffer);
+
+      struct ibv_mr * mr = ep->reg_mem((char*)heap_buffer, ep->default_segment_size() );
+      ep->push_receive_heap_region(mr,obj);
+      reg[i].vaddr = heap_buffer;
+      reg[i].rkey = mr->rkey;
+      reg[i].length=ep->default_segment_size();
+  }
+
+  log_debug(naos) ("[jni_CreatePassiveRdmaEP] send %u buffers",nums);
+  if(nums<0){
+    nums = 0;
+  }
+ 
+  ep->exchange_with_active(reg, nums); 
+  return ep;
+
+} }
+
+extern "C" { void JNICALL jni_FinilizeRdmaEP(JNIEnv* env, void* _ep){
+  JNIWrapper("jni_FinilizeRdmaEP");
+
+  // depricated
+  
+}}
+
+// to check whether it is redeable
+extern "C" { jint JNICALL jni_PollRdmaEP(JNIEnv* env, void* _ep, jint timeout){
+  JNIWrapper("jni_PollRdmaEP");
+  PassiveVerbsEP* ep = (PassiveVerbsEP*)_ep;
+  int iter = 0; 
+
+  bool blocking = (timeout != 0);
+
+  while(iter < 2){
+    if(blocking && iter == 1){
+      ep->block_on_event(timeout);  
+    } 
+    ep->process_completions(); // to progress
+
+    if(ep->has_heap_request()){
+     // printf("------------Send new heap from JNI\n");
+      int nums =  ep->has_heap_request();
+      region_t reg[64]; 
+      assert(nums <= 64, "too many buffer requested");
+      for(int i =0; i < nums; i++){
+          uint64_t heap_buffer = 0;
+          jobject obj = JVM_AllocAndPinBuffer(env, ep->default_segment_size(), &heap_buffer);
+
+          struct ibv_mr * mr = ep->reg_mem((char*)heap_buffer, ep->default_segment_size() );
+          ep->push_receive_heap_region(mr,obj);
+          reg[i].vaddr = heap_buffer;
+          reg[i].rkey = mr->rkey;
+          reg[i].length=ep->default_segment_size();
+      }
+      bool t = ep->send_heap_reply(&reg[0],nums);
+      if(!t){
+         printf("-------------------------------------------------Failed\n");
+      }
+    } 
+
+    jobject obj = NULL;
+
+    if (ep->deregister_old_region(&obj)){
+      JVM_UnpinBuffer(env,obj);
+    }
+
+    if(ep->can_repost_receives() > 16){
+      uint32_t to_commit = ep->repost_receives();
+      log_debug(naos) ("[jni_PollRdmaEP] we can repost %u receives",to_commit);
+      ep->send_commit_receives(to_commit);
+    }
+    ep->process_completions();
+
+    if(ep->is_readable_int() || ep->is_readable()){
+        return 2*((int)ep->is_readable_int()) + ((int)ep->is_readable()); 
+    }
+    iter++;
+  } 
+
+  return 2*((int)ep->is_readable_int()) + ((int)ep->is_readable()); // 0 - nothing, 1 - has object, 2-has int, 3-has both
+}}
+
+extern "C" { void JNICALL jni_RdmaWriteObj(JNIEnv* env, jlong _ep, jobject obj, jint array_len){
+  JNIWrapper("jni_RdmaWriteObj");
+  JVM_RdmaWriteObj(env, _ep, obj, array_len);
+}}
+
+extern "C" { jlong JNICALL jni_AsyncRdmaWriteObj(JNIEnv* env, jlong _ep, jobject obj, jint array_len){
+  JNIWrapper("jni_AsyncRdmaWriteObj");
+  return JVM_AsyncRdmaWriteObj(env, _ep, obj, array_len);
+}}
+
+
+
+
+extern "C" { jobject JNICALL jni_RdmaReadObj(JNIEnv* env, jlong _ep){
+  JNIWrapper("jni_RdmaReadObj");
+
+  PassiveVerbsEP* ep = (PassiveVerbsEP*)_ep;
+
+  while(!ep->is_readable()){
+    ep->process_completions(); // to progress
+    jobject obj = NULL;
+
+    if (ep->deregister_old_region(&obj)){
+      JVM_UnpinBuffer(env,obj);
+    } else {
+      break;
+    }
+  }
+
+  return JVM_RdmaReadObj(env, _ep);
+}}
+
+extern "C" { void JNICALL jni_RdmaWriteInt(JNIEnv* env, jlong _ep, jint val){
+  JNIWrapper("jni_RdmaWriteInt");
+  ActiveVerbsEP* ep = (ActiveVerbsEP*)_ep;
+  
+  bool is_sent = ep->send_int(val);
+  if(!is_sent){
+    ep->flush(false);
+    if(ep->can_repost_receives() > 8){
+      uint32_t to_commit = ep->repost_receives();
+      log_debug(naos) ("[jni_RdmaWriteInt] we can repost %u receives",to_commit);
+     // ep->send_commit_receives(to_commit);
+    }
+    ep->flush(true);
+  }
+}}
+
+extern "C" { jint JNICALL jni_RdmaReadInt(JNIEnv* env, jlong _ep){
+  JNIWrapper("jni_RdmaReadInt");
+  PassiveVerbsEP* ep = (PassiveVerbsEP*)_ep;
+  do{
+    ep->process_completions();// to progress
+    jobject obj = NULL;
+
+   /* if (ep->deregister_old_region(&obj)){
+      JVM_UnpinBuffer(env,obj);
+    } */
+
+    if(ep->can_repost_receives() > 8){
+      uint32_t to_commit = ep->repost_receives();
+      log_debug(naos) ("[jni_RdmaReadInt] we can repost %u receives",to_commit);
+      ep->send_commit_receives(to_commit);
+    }
+
+  }while(!ep->is_readable_int());
+
+  return ep->pop_int();
+}}
+
+
+extern "C" { void JNICALL jni_RdmaCloseEP(JNIEnv* env, jlong _ep){
+  JNIWrapper("jni_RdmaCloseEP");
+  JVM_RdmaCloseEP(env, _ep);
+}}
+
+uint64_t count2 = 0;
+
+extern "C" { void JNICALL jni_Test_f6(JNIEnv* env){
+  JNIWrapper("jni_Test_f6");
+  count2++;
+}}
+
+extern "C" { void JNICALL jni_Test_f7(JNIEnv* env){
+  JNIWrapper("jni_Test_f7");
+  JVM_Test_f7(env);
+}}
+
+extern "C" { void JNICALL jni_WaitRdma(JNIEnv* env, jlong rdmaep, jlong handle){
+  JNIWrapper("jni_WaitRdma");
+  JVM_WaitRdma(env,rdmaep,handle);
+}}
+
+extern "C" { jboolean JNICALL jni_TestRdma(JNIEnv* env, jlong rdmaep, jlong handle){
+  JNIWrapper("jni_TestRdma");
+  return JVM_TestRdma(env,rdmaep,handle);
+}}
+
+extern "C" { void*  JNICALL jni_CreateNaosTcp(JNIEnv* env,int fd){
+  JNIWrapper("jni_CreateNaosTcp");
+  return JVM_CreateNaosTcp(env,fd);
+}}
+
+extern "C" { void JNICALL jni_Test_f11(JNIEnv* env,jobject object){
+  JNIWrapper("jni_Test_f11");
+  JVM_Test_f11(env,object);
+}}
+ 
+JNI_ENTRY(void, jni_SendNaosTcp(JNIEnv *env, jlong naostcp, jobject initial_object, jint array_len))
+  JNIWrapper("SendNaosTCP");
+  send_naos_tcp((uint64_t)naostcp, initial_object,array_len);
+JNI_END
+
+JNI_ENTRY(jobject, jni_ReceiveNaosTcp(JNIEnv *env, jlong naostcp, jlong was_iterable))
+  JNIWrapper("ReceiveNaosTCP");
+  return receive_naos_tcp((uint64_t)naostcp, (uint64_t)was_iterable);
+JNI_END
+
+JNI_ENTRY(jobject, jni_SendSkyway(JNIEnv *env, jlong skyway, jobject initial_object, jint init_size))
+  JNIWrapper("SendSkyway");
+  return send_graph_skyway(skyway, initial_object, init_size);
+JNI_END
+
+JNI_ENTRY(jint, jni_SendSkywayBuf(JNIEnv *env, jlong skyway, jobject initial_object, jobject buf))
+  JNIWrapper("SendSkywayBuf");
+  return send_graph_skyway_to_buf(skyway, initial_object, buf);
+JNI_END
+ 
+
+JNI_ENTRY(jobject, jni_ReceiveSkyway(JNIEnv *env, jlong skyway, jobject bytes))
+  JNIWrapper("ReceiveSkyway");
+  return receive_graph_skyway(skyway,bytes);
+JNI_END
+
+
+JNI_ENTRY(jlong, jni_CreateSkyway(JNIEnv *env))
+  JNIWrapper("CreateSkyway");
+  return create_skyway();
+JNI_END
+
+JNI_ENTRY(void, jni_RegisterSkywayClass(JNIEnv *env, jlong skyway, jclass clazz, jint id))
+  JNIWrapper("RegisterSkywayClass");
+  Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(clazz));
+  return register_class_skyway(skyway, k, id );
+JNI_END
+
+ 
+
+JNI_ENTRY(jlong, jni_GetSize(JNIEnv *env, jobject initial_object, jboolean bfs))
+  JNIWrapper("GetSize");
+  return naos_get_size(initial_object, bfs);
+JNI_END
+
+
+JNI_ENTRY(void, jni_NaosSocketClose(JNIEnv *env, jlong naostcp))
+  JNIWrapper("NaosSocketClose");
+  close_tcp_fd(naostcp);
+JNI_END
+
+JNI_ENTRY(jlong, jni_GetKlassServiceAddr(JNIEnv *env, jint ip, jint fd))
+  JNIWrapper("GetKlassServiceAddr");
+  return (jlong) get_or_create_klass_service_address((jint)ip, fd);
+JNI_END
+
 // Structure containing all jni functions
 struct JNINativeInterface_ jni_NativeInterface = {
     NULL,
@@ -3766,7 +4056,35 @@ struct JNINativeInterface_ jni_NativeInterface = {
 
     // Module features
 
-    jni_GetModule
+    jni_GetModule,
+
+    // konst naos related
+    jni_CreateActiveRdmaEP,
+    jni_CreatePassiveRdmaEP,
+    jni_FinilizeRdmaEP,
+    jni_PollRdmaEP,
+    jni_RdmaWriteObj,
+    jni_AsyncRdmaWriteObj,
+    jni_RdmaReadObj,
+    jni_RdmaWriteInt,
+    jni_RdmaReadInt,
+    jni_RdmaCloseEP,
+    jni_Test_f6,
+    jni_Test_f7,
+    jni_WaitRdma,
+    jni_TestRdma,
+    jni_CreateNaosTcp,
+    jni_Test_f11,
+    jni_SendNaosTcp,
+    jni_ReceiveNaosTcp,
+    jni_SendSkyway,
+    jni_SendSkywayBuf,
+    jni_ReceiveSkyway,
+    jni_CreateSkyway,
+    jni_RegisterSkywayClass,
+    jni_GetSize,
+    jni_NaosSocketClose,
+    jni_GetKlassServiceAddr
 };
 
 

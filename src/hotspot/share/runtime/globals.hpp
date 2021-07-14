@@ -2668,7 +2668,16 @@ define_pd_global(uint64_t,MaxRAM,                    1ULL*G);
           "Start flight recording with options"))                           \
                                                                             \
   experimental(bool, UseFastUnorderedTimeStamps, false,                     \
-          "Use platform unstable time where supported for timestamps only")
+          "Use platform unstable time where supported for timestamps only") \
+                                                                            \
+  experimental(bool, NaosDisableCycles, false,                              \
+          "NAOS cycle detection system deactivation trigger")               \
+                                                                            \
+  experimental(int, NaosPipelineSize, 0,                                    \
+          "NAOS pipeline size (default = 0 i.e., no pilelining.")           \
+                                                                            \
+  experimental(bool, NaosUseODP, false,                                     \
+          "NAOS RDMA use of ODP")                                           \
 
 #define VM_FLAGS(develop,                                                   \
                  develop_pd,                                                \

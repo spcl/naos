@@ -51,7 +51,7 @@ JVM_ASFLAGS += $(EXTRA_ASFLAGS)
 
 JVM_LIBS += \
     $(JVM_LIBS_FEATURES) \
-    #
+    -lrdmacm -libverbs
 
 # These files and directories are always excluded
 JVM_EXCLUDE_FILES += args.cc
