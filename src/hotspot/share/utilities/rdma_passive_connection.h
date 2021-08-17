@@ -216,7 +216,7 @@ public:
       if(odpmr == NULL){
         this->odpmr = ibv_reg_mr(this->pd, 0, SIZE_MAX, access | IBV_ACCESS_ON_DEMAND );
       }
-
+#ifdef IBV_ADVISE_MR_FLAG_FLUSH
       struct ibv_sge sge;
       sge.addr = (uint64_t)buffer;
       sge.length = length;
@@ -226,6 +226,8 @@ public:
         printf("failed prefetch %d\n",ret);
         fflush(stdout);
       }
+#endif
+
       return odpmr;
     }
     struct ibv_mr * mr = ibv_reg_mr(this->pd, buffer, length, access );
